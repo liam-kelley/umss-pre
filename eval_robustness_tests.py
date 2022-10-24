@@ -43,24 +43,30 @@ import math
 import random
 
 # Manual option
-force_only_one_seed=True
+force_only_one_seed=False
 
 # Random seed initialization
 torch.manual_seed(0)
-random.seed(0)
-random_state=random.getstate()
 
 # Parse arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('--tag', type=str)
 parser.add_argument('--test-set', type=str, default='El Rossinyol', choices=['CSD'])
 parser.add_argument('--f0-from-mix', action='store_true', default=True)
+parser.add_argument('--vadseed', type=int, default=0)
 args, _ = parser.parse_known_args()
 tag = args.tag
 is_u_net = tag[:4] == 'unet'
+
+seed_fixed=args.vadseed
+print("vad seed :", seed_fixed)
+random.seed(seed_fixed)
+random_state=random.getstate()
+
 parser.add_argument('--eval-tag', type=str, default=tag)
 args, _ = parser.parse_known_args()
 f0_cuesta = args.f0_from_mix
+
 
 parser.add_argument('--teststocompute', nargs='+', default=['all'], choices=['all','baseline_gtf0','gtf0_transposed',
                                                         'gtf0_octaved','gtf0_voices_missing','gtf0_strict_error_percent'])
@@ -77,6 +83,7 @@ for _ , value in parser.parse_args()._get_kwargs():
 
 # Load model arguments
 device = 'cuda' if torch.cuda.is_available() else 'cpu' #Cuda is mandatory to reproduce results from the paper.
+print(device)
 trained_model, model_args = utils.load_model(tag, device, return_args=True)
 trained_model.return_synth_params = False
 trained_model.return_sources=True
@@ -86,7 +93,7 @@ original_cunet = model_args['original_cu_net'] if 'original_cu_net' in model_arg
 # Initialize unique results path.
 if args.f0_from_mix: f0_add_on = 'mf0'
 if args.test_set == 'CSD': test_set_add_on = 'CSD'
-path_to_save_results_masking = 'robustness_tests/evaluation/{}/eval_results_{}_{}_{}'.format(args.eval_tag , f0_add_on, test_set_add_on, device)
+path_to_save_results_masking = 'robustness_tests/evaluation/{}/eval_results_{}_{}_{}_vadseed{}'.format(args.eval_tag , f0_add_on, test_set_add_on, device, args.vadseed)
 if not os.path.isdir(path_to_save_results_masking):
     os.makedirs(path_to_save_results_masking, exist_ok=True)
 
@@ -233,17 +240,18 @@ def add_results_to_log(eval_results_masking,tag,device,test_name,test_index):
     try:
         log_df=pd.read_csv('./robustness_tests/robustness_eval_log.csv')
     except(FileNotFoundError):
-        log_df=pd.DataFrame(columns=["model","device","test_name","test_index", "SI-SDR_mean", "SI-SDR_median", "SI-SDR_std"])
+        log_df=pd.DataFrame(columns=["model","device","test_name","test_index", "SI-SDR_mean", "SI-SDR_median", "SI-SDR_std","vadseed"])
     new_row = {"model" : tag,
         "device" : device,
         "test_name" : test_name,
         "test_index" : test_index,
         "SI-SDR_mean" : eval_results_masking.mean(axis=0, skipna=True, numeric_only=True)['SI-SDR'],
         "SI-SDR_median" : eval_results_masking.median(axis=0, skipna=True, numeric_only=True)['SI-SDR'],
-        "SI-SDR_std": eval_results_masking.std(axis=0, skipna=True, numeric_only=True)['SI-SDR']}
+        "SI-SDR_std" : eval_results_masking.std(axis=0, skipna=True, numeric_only=True)['SI-SDR'],
+	"vadseed" : args.vadseed}
     log_df = log_df.append(pd.Series(new_row), ignore_index=True)
-    log_df = log_df[["model","device","test_name","test_index", "SI-SDR_mean", "SI-SDR_median", "SI-SDR_std"]]
-    log_df.sort_values(by=["device","model","test_name","test_index"],inplace=True)
+    log_df = log_df[["model","device","test_name","test_index", "SI-SDR_mean", "SI-SDR_median", "SI-SDR_std","vadseed"]]
+    log_df.sort_values(by=["device","model","test_name","test_index","vadseed"],inplace=True)
     log_df.to_csv('./robustness_tests/robustness_eval_log.csv')
 
 def apply_evaluate_save_test(lambda_func_builder,test_indexes,test_name,path_to_save_results_masking,song_gtf0_dict):
@@ -272,7 +280,7 @@ def apply_evaluate_save_test(lambda_func_builder,test_indexes,test_name,path_to_
 
 # Number of seeds
 if is_u_net: n_seeds = 1
-else: n_seeds = 5
+else: n_seeds = 3
 if force_only_one_seed : n_seeds=1
 
 song_gtf0_dict = load_groundTruthF0_files()
